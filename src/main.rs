@@ -41,7 +41,86 @@ fn handle_client(mut stream: TcpStream, store: Arc<Mutex<KvStore>>) {
         let cmd = parts[0].to_uppercase();
 
         match cmd.as_str() {
-            // ------------- LIST Commands -------------
+            // ---------- SET commands (SADD, SREM, SMEMBERS, SISMEMBER) ----------
+            "SADD" => {
+                if parts.len() < 3 {
+                    writeln!(stream, "ERR usage: SADD key member [member ...]").ok();
+                    continue;
+                }
+                let key = parts[1];
+                let members: Vec<String> = parts[2..].iter().map(|s| s.to_string()).collect();
+                let mut store_guard = store.lock().unwrap();
+                match store_guard.sadd(key, members) {
+                    Ok(added) => {
+                        if let Err(e) = store_guard.save_to_file(DB_FILE) {
+                            eprintln!("Failed to save db: {e}");
+                            writeln!(stream, "ERR failed to save").ok();
+                            continue;
+                        }
+                        writeln!(stream, "{added}").ok();
+                    }
+                    Err(e) => writeln!(stream, "ERR {e}").ok(),
+                }
+            }
+
+            "SREM" => {
+                if parts.len() < 3 {
+                    writeln!(stream, "ERR usage: SREM key member [member ...]").ok();
+                    continue;
+                }
+                let key = parts[1];
+                let members: Vec<String> = parts[2..].iter().map(|s| s.to_string()).collect();
+                let mut store_guard = store.lock().unwrap();
+                match store_guard.srem(key, members) {
+                    Ok(removed) => {
+                        if let Err(e) = store_guard.save_to_file(DB_FILE) {
+                            eprintln!("Failed to save db: {e}");
+                            writeln!(stream, "ERR failed to save").ok();
+                            continue;
+                        }
+                        writeln!(stream, "{removed}").ok();
+                    }
+                    Err(e) => writeln!(stream, "ERR {e}").ok(),
+                }
+            }
+
+            "SMEMBERS" => {
+                if parts.len() != 2 {
+                    writeln!(stream, "ERR usage: SMEMBERS key").ok();
+                    continue;
+                }
+                let key = parts[1];
+                let store_guard = store.lock().unwrap();
+                match store_guard.smembers(key) {
+                    Ok(members) => {
+                        if members.is_empty() {
+                            writeln!(stream, "(empty)").ok();
+                        } else {
+                            for m in members {
+                                writeln!(stream, "{m}").ok();
+                            }
+                        }
+                    }
+                    Err(e) => writeln!(stream, "ERR {e}").ok(),
+                }
+            }
+
+            "SISMEMBER" => {
+                if parts.len() != 3 {
+                    writeln!(stream, "ERR usage: SISMEMBER key member").ok();
+                    continue;
+                }
+                let key = parts[1];
+                let member = parts[2];
+                let store_guard = store.lock().unwrap();
+                match store_guard.sismember(key, member) {
+                    Ok(true) => writeln!(stream, "1").ok(),
+                    Ok(false) => writeln!(stream, "0").ok(),
+                    Err(e) => writeln!(stream, "ERR {e}").ok(),
+                }
+            }
+
+            // ---------- other commands (lists, strings, counters, etc.) ----------
             "LPUSH" => {
                 if parts.len() < 3 {
                     writeln!(stream, "ERR usage: LPUSH key value [value ...]").ok();
@@ -159,7 +238,7 @@ fn handle_client(mut stream: TcpStream, store: Arc<Mutex<KvStore>>) {
                 }
             }
 
-            // ------------- String / basic commands -------------
+            // ---------- Strings & basic commands ----------
             "GET" => {
                 if parts.len() != 2 {
                     writeln!(stream, "ERR wrong number of arguments").ok();
