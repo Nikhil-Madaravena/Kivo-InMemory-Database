@@ -32,9 +32,7 @@ fn handle_client(mut stream: TcpStream, store: Arc<Mutex<KvStore>>) {
             return;
         }
 
-        // Strip \r\n
         let line = line.trim_end_matches(&['\r', '\n'][..]);
-
         if line.is_empty() {
             continue;
         }
@@ -43,6 +41,125 @@ fn handle_client(mut stream: TcpStream, store: Arc<Mutex<KvStore>>) {
         let cmd = parts[0].to_uppercase();
 
         match cmd.as_str() {
+            // ------------- LIST Commands -------------
+            "LPUSH" => {
+                if parts.len() < 3 {
+                    writeln!(stream, "ERR usage: LPUSH key value [value ...]").ok();
+                    continue;
+                }
+                let key = parts[1];
+                let values: Vec<String> = parts[2..].iter().map(|s| s.to_string()).collect();
+                let mut store_guard = store.lock().unwrap();
+                match store_guard.lpush(key, values) {
+                    Ok(len) => {
+                        if let Err(e) = store_guard.save_to_file(DB_FILE) {
+                            eprintln!("Failed to save db: {e}");
+                            writeln!(stream, "ERR failed to save").ok();
+                            continue;
+                        }
+                        writeln!(stream, "{len}").ok();
+                    }
+                    Err(e) => writeln!(stream, "ERR {e}").ok(),
+                }
+            }
+
+            "RPUSH" => {
+                if parts.len() < 3 {
+                    writeln!(stream, "ERR usage: RPUSH key value [value ...]").ok();
+                    continue;
+                }
+                let key = parts[1];
+                let values: Vec<String> = parts[2..].iter().map(|s| s.to_string()).collect();
+                let mut store_guard = store.lock().unwrap();
+                match store_guard.rpush(key, values) {
+                    Ok(len) => {
+                        if let Err(e) = store_guard.save_to_file(DB_FILE) {
+                            eprintln!("Failed to save db: {e}");
+                            writeln!(stream, "ERR failed to save").ok();
+                            continue;
+                        }
+                        writeln!(stream, "{len}").ok();
+                    }
+                    Err(e) => writeln!(stream, "ERR {e}").ok(),
+                }
+            }
+
+            "LPOP" => {
+                if parts.len() != 2 {
+                    writeln!(stream, "ERR usage: LPOP key").ok();
+                    continue;
+                }
+                let key = parts[1];
+                let mut store_guard = store.lock().unwrap();
+                match store_guard.lpop(key) {
+                    Some(v) => {
+                        if let Err(e) = store_guard.save_to_file(DB_FILE) {
+                            eprintln!("Failed to save db: {e}");
+                            writeln!(stream, "ERR failed to save").ok();
+                            continue;
+                        }
+                        writeln!(stream, "{v}").ok();
+                    }
+                    None => writeln!(stream, "NIL").ok(),
+                }
+            }
+
+            "RPOP" => {
+                if parts.len() != 2 {
+                    writeln!(stream, "ERR usage: RPOP key").ok();
+                    continue;
+                }
+                let key = parts[1];
+                let mut store_guard = store.lock().unwrap();
+                match store_guard.rpop(key) {
+                    Some(v) => {
+                        if let Err(e) = store_guard.save_to_file(DB_FILE) {
+                            eprintln!("Failed to save db: {e}");
+                            writeln!(stream, "ERR failed to save").ok();
+                            continue;
+                        }
+                        writeln!(stream, "{v}").ok();
+                    }
+                    None => writeln!(stream, "NIL").ok(),
+                }
+            }
+
+            "LRANGE" => {
+                if parts.len() != 4 {
+                    writeln!(stream, "ERR usage: LRANGE key start end").ok();
+                    continue;
+                }
+                let key = parts[1];
+                let start: isize = match parts[2].parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        writeln!(stream, "ERR start must be integer").ok();
+                        continue;
+                    }
+                };
+                let end: isize = match parts[3].parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        writeln!(stream, "ERR end must be integer").ok();
+                        continue;
+                    }
+                };
+                let store_guard = store.lock().unwrap();
+                match store_guard.lrange(key, start, end) {
+                    Ok(vals) => {
+                        if vals.is_empty() {
+                            writeln!(stream, "(empty)").ok();
+                        } else {
+                            for v in vals {
+                                writeln!(stream, "{v}").ok();
+                            }
+                        }
+                    }
+                    Err(e) => writeln!(stream, "ERR {e}").ok(),
+                }
+            }
+
+            // ------------- String / basic commands -------------
             "GET" => {
                 if parts.len() != 2 {
                     writeln!(stream, "ERR wrong number of arguments").ok();
@@ -64,17 +181,13 @@ fn handle_client(mut stream: TcpStream, store: Arc<Mutex<KvStore>>) {
                 }
                 let key = parts[1].to_string();
                 let value = parts[2..].join(" ");
-
-                {
-                    let mut store_guard = store.lock().unwrap();
-                    store_guard.set(key, value);
-                    if let Err(e) = store_guard.save_to_file(DB_FILE) {
-                        eprintln!("Failed to save db: {e}");
-                        writeln!(stream, "ERR failed to save").ok();
-                        continue;
-                    }
+                let mut store_guard = store.lock().unwrap();
+                store_guard.set_string(key, value);
+                if let Err(e) = store_guard.save_to_file(DB_FILE) {
+                    eprintln!("Failed to save db: {e}");
+                    writeln!(stream, "ERR failed to save").ok();
+                    continue;
                 }
-
                 writeln!(stream, "OK").ok();
             }
 
@@ -161,9 +274,7 @@ fn handle_client(mut stream: TcpStream, store: Arc<Mutex<KvStore>>) {
                         }
                         writeln!(stream, "{new}").ok();
                     }
-                    Err(e) => {
-                        writeln!(stream, "ERR {e}").ok();
-                    }
+                    Err(e) => writeln!(stream, "ERR {e}").ok(),
                 }
             }
 
@@ -183,26 +294,7 @@ fn handle_client(mut stream: TcpStream, store: Arc<Mutex<KvStore>>) {
                         }
                         writeln!(stream, "{new}").ok();
                     }
-                    Err(e) => {
-                        writeln!(stream, "ERR {e}").ok();
-                    }
-                }
-            }
-
-            "KEYS" => {
-                if parts.len() != 2 {
-                    writeln!(stream, "ERR usage: KEYS pattern").ok();
-                    continue;
-                }
-                let pattern = parts[1];
-                let store_guard = store.lock().unwrap();
-                let keys = store_guard.keys(pattern);
-                if keys.is_empty() {
-                    writeln!(stream, "(empty)").ok();
-                } else {
-                    // simple space-separated output
-                    let joined = keys.join(" ");
-                    writeln!(stream, "{joined}").ok();
+                    Err(e) => writeln!(stream, "ERR {e}").ok(),
                 }
             }
 
