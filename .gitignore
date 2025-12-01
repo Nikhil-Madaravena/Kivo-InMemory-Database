@@ -1,0 +1,76 @@
+# ======================================
+# Rust / Cargo
+# ======================================
+
+# Target directory (build output)
+target/
+
+# Cargo package backup file
+Cargo.lock
+# (If you are building a library, you can track Cargo.lock; for binaries it's optional)
+
+# Build logs
+*.log
+
+# ======================================
+# Rust tooling
+# ======================================
+rustfmt.toml
+clippy.toml
+
+# ======================================
+# OS / Environment
+# ======================================
+
+# macOS
+.DS_Store
+
+# Linux
+*.swp
+*.swo
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# ======================================
+# Editors / IDEs
+# ======================================
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+
+# Vim / NeoVim
+*.vim
+*.tmp
+
+# Other editors
+*.kate-swp
+
+# ======================================
+# Project specific (mini_kv)
+# ======================================
+
+# Database persistence files
+data.json
+*.tmp
+
+# Logs from server
+server.log
+
+# ======================================
+# Backup
+# ======================================
+
+*~
+# ======================================
+# Project specific / editors
+# ======================================
+
+# VS Code Local History / Zed history
+.history/
+.history
