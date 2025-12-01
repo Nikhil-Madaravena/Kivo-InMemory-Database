@@ -1,21 +1,26 @@
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum Value {
+    String(String),
+    List(VecDeque<String>),
+    // future: Hash, Set, etc.
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct Entry {
-    value: String,
-    // Unix timestamp (seconds) when key expires. None = no expiry.
-    expires_at: Option<i64>,
+pub struct Entry {
+    pub value: Value,
+    pub expires_at: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct KvStore {
-    map: HashMap<String, Entry>,
+    pub map: HashMap<String, Entry>,
 }
 
 fn now_secs() -> i64 {
@@ -79,37 +84,40 @@ impl KvStore {
         }
     }
 
+    // -------------------------
+    // String operations
+    // -------------------------
+
     /// Basic SET: overwrites value and clears TTL.
-    pub fn set(&mut self, key: String, value: String) {
+    pub fn set_string(&mut self, key: String, value: String) {
         let entry = Entry {
-            value,
+            value: Value::String(value),
             expires_at: None,
         };
         self.map.insert(key, entry);
     }
 
-    /// GET returns cloned value (None if missing or expired).
+    /// GET returns cloned string value if value type is String (else None)
     pub fn get(&self, key: &str) -> Option<String> {
         self.map.get(key).and_then(|entry| {
-            if Self::is_entry_alive(entry) {
-                Some(entry.value.clone())
-            } else {
-                None
+            if !Self::is_entry_alive(entry) {
+                return None;
+            }
+            match &entry.value {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
             }
         })
     }
 
-    /// DELETE returns true if key existed and was removed.
     pub fn delete(&mut self, key: &str) -> bool {
         self.map.remove(key).is_some()
     }
 
-    /// EXISTS returns true if key exists and is not expired.
     pub fn exists(&self, key: &str) -> bool {
-        self.get(key).is_some()
+        self.map.get(key).map_or(false, |entry| Self::is_entry_alive(entry))
     }
 
-    /// SET TTL in seconds. Returns true if key exists.
     pub fn expire(&mut self, key: &str, ttl_secs: i64) -> bool {
         if let Some(entry) = self.map.get_mut(key) {
             let ttl = if ttl_secs < 0 { 0 } else { ttl_secs };
@@ -122,7 +130,7 @@ impl KvStore {
     }
 
     /// TTL semantics:
-    /// - None  => key not found
+    /// - None => key not found
     /// - Some(-1) => key exists, no expiry
     /// - Some(n >= 0) => seconds remaining
     pub fn ttl(&self, key: &str) -> Option<i64> {
@@ -135,83 +143,198 @@ impl KvStore {
                     Some(exp - now)
                 }
             } else {
-                // exists, but no expiry
                 Some(-1)
             }
         })
     }
 
-    /// INCR/DECR functionality: delta can be +1 / -1 or any integer.
-    /// - If key missing → treated as 0.
-    /// - If value not an int → error.
+    /// Basic INCR/DECR: treats missing as 0, errors if not integer
     pub fn incr(&mut self, key: &str, delta: i64) -> Result<i64, String> {
+        // If key exists but expired, treat as missing
+        if let Some(entry) = self.map.get_mut(key) {
+            if !Self::is_entry_alive(entry) {
+                self.map.remove(key);
+            }
+        }
+
         let entry = self
             .map
             .entry(key.to_string())
             .or_insert(Entry {
-                value: "0".to_string(),
+                value: Value::String("0".to_string()),
                 expires_at: None,
             });
 
-        // If expired, reset it to 0
-        if let Some(exp) = entry.expires_at {
-            if now_secs() >= exp {
-                entry.value = "0".to_string();
-                entry.expires_at = None;
+        match &mut entry.value {
+            Value::String(s) => {
+                let cur: i64 = s.parse().map_err(|_| "value is not an integer".to_string())?;
+                let new = cur + delta;
+                *s = new.to_string();
+                Ok(new)
+            }
+            _ => Err("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+        }
+    }
+
+    // -------------------------
+    // LIST operations
+    // -------------------------
+
+    /// Internal helper: get mutable entry only if alive (removes expired entries)
+    fn get_entry_mut_if_alive(&mut self, key: &str) -> Option<&mut Entry> {
+        if let Some(entry) = self.map.get_mut(key) {
+            if !Self::is_entry_alive(entry) {
+                // expired: remove and return None
+                self.map.remove(key);
+                return None;
+            }
+            Some(entry)
+        } else {
+            None
+        }
+    }
+
+    /// LPUSH: push values to head (left). Returns new length or Err if wrong type.
+    pub fn lpush(&mut self, key: &str, values: Vec<String>) -> Result<usize, String> {
+        if let Some(entry) = self.get_entry_mut_if_alive(key) {
+            match &mut entry.value {
+                Value::List(list) => {
+                    for val in values.into_iter() {
+                        list.push_front(val);
+                    }
+                    return Ok(list.len());
+                }
+                _ => return Err("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
             }
         }
 
-        let current: i64 = entry
-            .value
-            .parse()
-            .map_err(|_| "value is not an integer".to_string())?;
-
-        let new_val = current + delta;
-        entry.value = new_val.to_string();
-        Ok(new_val)
+        // create new list
+        let mut dq = VecDeque::new();
+        for val in values.into_iter() {
+            dq.push_front(val);
+        }
+        let entry = Entry {
+            value: Value::List(dq),
+            expires_at: None,
+        };
+        self.map.insert(key.to_string(), entry);
+        match self.map.get(key) {
+            Some(e) => match &e.value {
+                Value::List(list) => Ok(list.len()),
+                _ => unreachable!(),
+            },
+            None => Ok(0),
+        }
     }
 
-    /// KEYS with simple patterns:
-    /// - "*" → all keys
-    /// - "prefix*" → keys starting with prefix
-    /// - anything else → exact match if exists
-    pub fn keys(&self, pattern: &str) -> Vec<String> {
-        let now = now_secs();
-
-        if pattern == "*" {
-            return self
-                .map
-                .iter()
-                .filter_map(|(k, e)| {
-                    if e.expires_at.map_or(true, |exp| now < exp) {
-                        Some(k.clone())
-                    } else {
-                        None
+    /// RPUSH: push values to tail (right). Return new length or Err.
+    pub fn rpush(&mut self, key: &str, values: Vec<String>) -> Result<usize, String> {
+        if let Some(entry) = self.get_entry_mut_if_alive(key) {
+            match &mut entry.value {
+                Value::List(list) => {
+                    for val in values.into_iter() {
+                        list.push_back(val);
                     }
-                })
-                .collect();
+                    return Ok(list.len());
+                }
+                _ => return Err("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+            }
         }
 
-        if let Some(prefix) = pattern.strip_suffix('*') {
-            return self
-                .map
-                .iter()
-                .filter_map(|(k, e)| {
-                    if k.starts_with(prefix)
-                        && e.expires_at.map_or(true, |exp| now < exp)
-                    {
-                        Some(k.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+        let mut dq = VecDeque::new();
+        for val in values.into_iter() {
+            dq.push_back(val);
         }
+        let entry = Entry {
+            value: Value::List(dq),
+            expires_at: None,
+        };
+        self.map.insert(key.to_string(), entry);
+        match self.map.get(key) {
+            Some(e) => match &e.value {
+                Value::List(list) => Ok(list.len()),
+                _ => unreachable!(),
+            },
+            None => Ok(0),
+        }
+    }
 
-        if self.exists(pattern) {
-            vec![pattern.to_string()]
+    /// LPOP: pop from head. Returns Some(value) or None
+    pub fn lpop(&mut self, key: &str) -> Option<String> {
+        if let Some(entry) = self.get_entry_mut_if_alive(key) {
+            match &mut entry.value {
+                Value::List(list) => {
+                    let v = list.pop_front();
+                    if list.is_empty() {
+                        self.map.remove(key);
+                    }
+                    v
+                }
+                _ => None,
+            }
         } else {
-            Vec::new()
+            None
+        }
+    }
+
+    /// RPOP: pop from tail.
+    pub fn rpop(&mut self, key: &str) -> Option<String> {
+        if let Some(entry) = self.get_entry_mut_if_alive(key) {
+            match &mut entry.value {
+                Value::List(list) => {
+                    let v = list.pop_back();
+                    if list.is_empty() {
+                        self.map.remove(key);
+                    }
+                    v
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// LRANGE: start and end inclusive. Support negative indices.
+    /// Returns Vec<String> (may be empty).
+    pub fn lrange(&self, key: &str, start: isize, end: isize) -> Result<Vec<String>, String> {
+        if let Some(entry) = self.map.get(key) {
+            if !Self::is_entry_alive(entry) {
+                return Ok(vec![]);
+            }
+            match &entry.value {
+                Value::List(list) => {
+                    let len = list.len() as isize;
+                    if len == 0 {
+                        return Ok(vec![]);
+                    }
+
+                    let mut s = if start < 0 { len + start } else { start };
+                    let mut e = if end < 0 { len + end } else { end };
+
+                    if s < 0 { s = 0; }
+                    if e < 0 { return Ok(vec![]); } // end before start after normalization
+
+                    if s as usize >= list.len() || s > e {
+                        return Ok(vec![]);
+                    }
+                    if e >= len { e = len - 1; }
+
+                    let s_us = s as usize;
+                    let e_us = e as usize;
+
+                    let mut out = Vec::new();
+                    for i in s_us..=e_us {
+                        if let Some(val) = list.get(i) {
+                            out.push(val.clone());
+                        }
+                    }
+                    Ok(out)
+                }
+                _ => Err("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+            }
+        } else {
+            Ok(vec![])
         }
     }
 
