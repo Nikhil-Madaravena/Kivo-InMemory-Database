@@ -1,56 +1,46 @@
-# 🗄️ MiniKV — A Lightweight In-Memory Database in Rust
+# 🗄️ MiniKV — Lightweight In-Memory Database in Rust
 
-A fast, Redis-like **in-memory key–value database** written in Rust from scratch.
-Supports **strings, lists, counters, TTL**, JSON-based persistence, and a simple TCP text protocol.
+A fast, Redis-inspired **in-memory key–value database**, built from scratch in Rust.
+Supports **Strings, Lists, Sets, Counters, TTL**, and **JSON persistence**, exposed over a simple TCP server.
 
-Built to learn systems programming, storage engines, and database internals.
+Perfect for learning **systems programming, databases, storage engines, and Rust concurrency**.
 
 ---
 
 ## ✨ Features
 
-### ✔ Core Database
+### 🧩 Core Data Types
 
-* In-memory `HashMap` engine
-* String values (`SET`, `GET`, `DEL`, `EXISTS`)
-* Auto-cleanup of expired keys (manual TTL)
-* Atomic counters (`INCR`, `DECR`)
-* JSON persistence (`data.json`)
+- **String** values (`SET`, `GET`, `DEL`, `EXISTS`)
+- **List** values (Redis-style `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`)
+- **Set** values (`SADD`, `SREM`, `SMEMBERS`, `SISMEMBER`)
+- Safe type checks with detailed errors
+- Atomic counters (`INCR`, `DECR`)
+- Key expiration (`EXPIRE`, `TTL`)
 
-### ✔ Redis-Style Lists
+### 🧠 Storage Engine
 
-* `LPUSH` — push values to the head
-* `RPUSH` — push values to the tail
-* `LPOP` — pop from head
-* `RPOP` — pop from tail
-* `LRANGE` — slice lists with positive/negative indices
+- In-memory storage backed by Rust’s `HashMap`
+- JSON file persistence (`data.json`)
+- Atomic rewrite: write → temp file → rename
+- Thread-safe execution via `Arc<Mutex<KvStore>>`
 
-### ✔ TTL
+### 🔌 TCP Server
 
-* `EXPIRE key seconds`
-* `TTL key`
-
-### ✔ Server
-
-* Multi-threaded TCP server
-* Simple, human-readable text protocol
-* Thread-safe (`Arc<Mutex<T>>`)
-* Runs on port **6379** (same as Redis)
+- Multi-threaded (one thread per client)
+- Simple human-readable text protocol
+- Runs on **127.0.0.1:6379**
+- Works with `nc`, custom clients, or scripts
 
 ---
 
 ## 🚀 Getting Started
 
-### 1️⃣ Clone the repo
+### 1️⃣ Clone & build
 
 ```bash
 git clone https://github.com/yourusername/minikv.git
 cd minikv
-```
-
-### 2️⃣ Build & run
-
-```bash
 cargo run
 ```
 
@@ -62,25 +52,28 @@ mini_kv server listening on 127.0.0.1:6379
 
 ---
 
-## 🧪 Using the Database
+## 🧪 Interacting with MiniKV
 
-You interact with MiniKV via **netcat**:
+Use **netcat**:
 
 ```bash
 nc 127.0.0.1 6379
 ```
 
-### 🔤 String commands
+---
+
+# 🔤 String Commands
 
 ```
 SET name Nikhil
 GET name
-EXPIRE name 5
-TTL name
+EXISTS name
 DEL name
 ```
 
-### 🔢 Counter commands
+---
+
+# 🔢 Counters (Atomic)
 
 ```
 INCR visits
@@ -88,7 +81,18 @@ INCR visits
 DECR visits
 ```
 
-### 📝 List commands
+---
+
+# ⏳ TTL (Expiration)
+
+```
+EXPIRE session 10
+TTL session
+```
+
+---
+
+# 📜 List Commands
 
 ```
 LPUSH mylist 10
@@ -98,105 +102,108 @@ LPOP mylist
 RPOP mylist
 ```
 
-### 🧹 Other commands
+---
+
+# 🧮 Set Commands
 
 ```
-EXISTS key
-FLUSHALL
-QUIT
+SADD tags rust
+SADD tags rust db cli
+SMEMBERS tags
+SISMEMBER tags rust
+SREM tags db
+SMEMBERS tags
 ```
 
 ---
 
-## 📁 Persistence
-
-MiniKV stores all data in `data.json`:
-
-* On every write, the file is safely rewritten (atomic write).
-* On startup, MiniKV loads the file into memory.
-
-Future planned:
-✔ Append-Only File (AOF)
-✔ RDB snapshotting
-
----
-
-## 🏗 Project Structure
+## 🧱 Project Structure
 
 ```
 mini_kv/
 ├── src/
-│   ├── lib.rs      # KvStore engine
-│   ├── main.rs     # TCP server
-├── data.json       # Persistence file
+│   ├── lib.rs        # Core KV engine (Strings, Lists, Sets, TTL, persistence)
+│   ├── main.rs       # TCP server and command protocol
+├── data.json         # Persistent storage file
 ├── Cargo.toml
 └── README.md
 ```
 
 ---
 
-## 🧠 Internals (How MiniKV Works)
+## 🧠 How It Works
 
-### Storage Engine
+### Storage Model
 
-* In-memory `HashMap<String, Entry>`
-* `Entry` contains:
-
-  * `Value` enum (`String` or `List`)
-  * optional TTL timestamp
+```
+HashMap<String, Entry>
+Entry {
+  value: Value,        // String, List, Set
+  expires_at: Option<timestamp>
+}
+```
 
 ### Concurrency
 
-* `Arc<Mutex<KvStore>>` shared across worker threads
-* Each client handled in its own thread
+- Shared DB: `Arc<Mutex<KvStore>>`
+- Each client handled in its own thread
 
 ### Persistence
 
-* Entire DB written as pretty JSON
-* Temporary file → atomic rename for safety
+- `serde_json` used for human-readable persistence
+- Safe writes using temp files & atomic replace
 
 ---
 
 ## 🛣 Roadmap
 
-### 🚀 Coming next
+### ✔ Completed
 
-* RESP protocol support (use `redis-cli` with MiniKV)
-* Lists: LLEN, LINDEX, LSET
-* Sets & Hashes
-* async I/O with Tokio
-* TTL cleanup thread
-* AOF (append-only log)
-* Background snapshotting
-* Cluster mode / replication
-* Web dashboard (React + WebSockets)
+- Strings
+- Lists
+- Sets
+- TTL
+- Counters
+- JSON persistence
+- Multithreaded TCP server
 
-If you want any of these now, open an issue or PR!
+### 🔜 Coming Soon
+
+- More Set commands (`SCARD`, `SPOP`, `SRANDMEMBER`)
+- More List commands (`LLEN`, `LINDEX`, `LSET`, `LTRIM`)
+- Hash data type (`HSET`, `HGET`, `HGETALL`)
+- TTL cleanup background thread
+- AOF persistence (append-only log)
+- RESP protocol (use `redis-cli` directly)
+- Async server (Tokio)
+- Web dashboard (React + WebSockets)
+- Sharded map for high concurrency
 
 ---
 
 ## 🤝 Contributing
 
 Contributions are welcome!
+
 You can help with:
 
-* New commands
-* Optimizations
-* Bug fixes
-* Documentation improvements
-* Adding tests
-* Adding benchmarks
+- Adding new commands
+- Performance improvements
+- Noise-free logging
+- RESP protocol support
+- Better error messages
+- Adding tests
 
 ---
 
 ## 📝 License
 
-MIT License — feel free to use MiniKV in your projects.
+MIT License.
+Use it anywhere freely.
 
 ---
 
-## ⭐ Like this project?
+## ⭐ Support the Project
 
-Star the repo to support development!
-It motivates more features: clustering, RESP support, sharded maps, async runtime, and more 🚀
-
+If you like this project, consider **starring** the repo —
+it motivates continued development!
