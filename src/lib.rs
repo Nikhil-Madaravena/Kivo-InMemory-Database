@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -9,7 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum Value {
     String(String),
     List(VecDeque<String>),
-    // future: Hash, Set, etc.
+    Set(HashSet<String>),
+    // future: Hash, SortedSet, etc.
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -194,7 +195,6 @@ impl KvStore {
         }
     }
 
-    /// LPUSH: push values to head (left). Returns new length or Err if wrong type.
     pub fn lpush(&mut self, key: &str, values: Vec<String>) -> Result<usize, String> {
         if let Some(entry) = self.get_entry_mut_if_alive(key) {
             match &mut entry.value {
@@ -208,7 +208,6 @@ impl KvStore {
             }
         }
 
-        // create new list
         let mut dq = VecDeque::new();
         for val in values.into_iter() {
             dq.push_front(val);
@@ -227,7 +226,6 @@ impl KvStore {
         }
     }
 
-    /// RPUSH: push values to tail (right). Return new length or Err.
     pub fn rpush(&mut self, key: &str, values: Vec<String>) -> Result<usize, String> {
         if let Some(entry) = self.get_entry_mut_if_alive(key) {
             match &mut entry.value {
@@ -259,7 +257,6 @@ impl KvStore {
         }
     }
 
-    /// LPOP: pop from head. Returns Some(value) or None
     pub fn lpop(&mut self, key: &str) -> Option<String> {
         if let Some(entry) = self.get_entry_mut_if_alive(key) {
             match &mut entry.value {
@@ -277,7 +274,6 @@ impl KvStore {
         }
     }
 
-    /// RPOP: pop from tail.
     pub fn rpop(&mut self, key: &str) -> Option<String> {
         if let Some(entry) = self.get_entry_mut_if_alive(key) {
             match &mut entry.value {
@@ -295,8 +291,6 @@ impl KvStore {
         }
     }
 
-    /// LRANGE: start and end inclusive. Support negative indices.
-    /// Returns Vec<String> (may be empty).
     pub fn lrange(&self, key: &str, start: isize, end: isize) -> Result<Vec<String>, String> {
         if let Some(entry) = self.map.get(key) {
             if !Self::is_entry_alive(entry) {
@@ -313,7 +307,7 @@ impl KvStore {
                     let mut e = if end < 0 { len + end } else { end };
 
                     if s < 0 { s = 0; }
-                    if e < 0 { return Ok(vec![]); } // end before start after normalization
+                    if e < 0 { return Ok(vec![]); }
 
                     if s as usize >= list.len() || s > e {
                         return Ok(vec![]);
@@ -341,5 +335,125 @@ impl KvStore {
     /// FLUSHALL – delete everything
     pub fn flush_all(&mut self) {
         self.map.clear();
+    }
+
+    // -------------------------
+    // SET operations
+    // -------------------------
+
+    /// Internal helper to get a mutable set (if key exists and is a set).
+    /// If expired, removes the entry and returns None.
+    fn get_set_mut_if_alive(&mut self, key: &str) -> Option<&mut HashSet<String>> {
+        if let Some(entry) = self.map.get_mut(key) {
+            if !Self::is_entry_alive(entry) {
+                self.map.remove(key);
+                return None;
+            }
+            match &mut entry.value {
+                Value::Set(s) => Some(s),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// SADD: add one or more members to a set.
+    /// Returns number of elements that were actually added (not already present).
+    pub fn sadd(&mut self, key: &str, members: Vec<String>) -> Result<usize, String> {
+        // If key exists but is not a set -> error
+        if let Some(entry) = self.map.get_mut(key) {
+            if !Self::is_entry_alive(entry) {
+                self.map.remove(key);
+            } else {
+                match &mut entry.value {
+                    Value::Set(set) => {
+                        let mut added = 0usize;
+                        for m in members.into_iter() {
+                            if set.insert(m) {
+                                added += 1;
+                            }
+                        }
+                        return Ok(added);
+                    }
+                    _ => return Err("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+                }
+            }
+        }
+
+        // create new set
+        let mut s = HashSet::new();
+        let mut added = 0usize;
+        for m in members.into_iter() {
+            if s.insert(m) {
+                added += 1;
+            }
+        }
+        let entry = Entry {
+            value: Value::Set(s),
+            expires_at: None,
+        };
+        self.map.insert(key.to_string(), entry);
+        Ok(added)
+    }
+
+    /// SREM: remove members from a set. Returns number removed.
+    pub fn srem(&mut self, key: &str, members: Vec<String>) -> Result<usize, String> {
+        if let Some(set) = self.get_set_mut_if_alive(key) {
+            let mut removed = 0usize;
+            for m in members.into_iter() {
+                if set.remove(&m) {
+                    removed += 1;
+                }
+            }
+            if set.is_empty() {
+                self.map.remove(key);
+            }
+            Ok(removed)
+        } else {
+            // If key missing or expired -> treated as zero removed
+            // If key exists but wrong type -> get_set_mut_if_alive returned None; need to check wrong type
+            if let Some(entry) = self.map.get(key) {
+                // key exists but not a set (and not expired)
+                if Self::is_entry_alive(entry) {
+                    return Err("WRONGTYPE Operation against a key holding the wrong kind of value".into());
+                }
+            }
+            Ok(0)
+        }
+    }
+
+    /// SMEMBERS: return all members of the set (as Vec<String>) or empty vec if missing
+    pub fn smembers(&self, key: &str) -> Result<Vec<String>, String> {
+        if let Some(entry) = self.map.get(key) {
+            if !Self::is_entry_alive(entry) {
+                return Ok(vec![]);
+            }
+            match &entry.value {
+                Value::Set(set) => {
+                    let mut out: Vec<String> = set.iter().cloned().collect();
+                    out.sort(); // deterministic order for testing/inspection
+                    Ok(out)
+                }
+                _ => Err("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+            }
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// SISMEMBER: check membership, returns true if member exists
+    pub fn sismember(&self, key: &str, member: &str) -> Result<bool, String> {
+        if let Some(entry) = self.map.get(key) {
+            if !Self::is_entry_alive(entry) {
+                return Ok(false);
+            }
+            match &entry.value {
+                Value::Set(set) => Ok(set.contains(member)),
+                _ => Err("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+            }
+        } else {
+            Ok(false)
+        }
     }
 }
