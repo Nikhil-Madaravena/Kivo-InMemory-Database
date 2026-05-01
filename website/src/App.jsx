@@ -190,64 +190,232 @@ const LandingPage = () => {
 
 const DocumentationPage = () => {
   useEffect(() => { window.scrollTo(0, 0); }, []);
-  
+  const [activeSection, setActiveSection] = useState('overview');
+
+  const navLinks = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'installation', label: 'Installation & Setup' },
+    { id: 'connecting', label: 'Connecting Clients' },
+    { id: 'datatypes', label: 'Data Types & Commands' },
+    { id: 'advanced', label: 'Advanced Features' },
+  ];
+
   return (
-    <main className="max-w-4xl mx-auto px-8 pt-32 pb-24 min-h-screen">
-      <div className="glass-effect p-12 rounded-3xl animate-fade-in-up">
-        <div className="flex items-center gap-4 mb-8">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-8 pt-24 pb-24 min-h-screen flex flex-col lg:flex-row gap-8">
+      {/* Sidebar Navigation */}
+      <aside className="lg:w-64 flex-shrink-0">
+        <div className="sticky top-24 glass-effect p-6 rounded-2xl hidden lg:block">
+          <h3 className="font-bold text-lg mb-4 text-white">Contents</h3>
+          <ul className="space-y-3 text-sm">
+            {navLinks.map(link => (
+              <li key={link.id}>
+                <a 
+                  href={`#${link.id}`} 
+                  className="text-brand-muted hover:text-brand-primary transition-colors block"
+                  onClick={() => setActiveSection(link.id)}
+                >
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 glass-effect p-8 lg:p-12 rounded-3xl animate-fade-in-up w-full max-w-4xl">
+        <div className="flex items-center gap-4 mb-10">
           <div className="p-3 bg-brand-primary/20 rounded-xl text-brand-primary"><TerminalSquare size={32}/></div>
-          <h1 className="text-4xl font-extrabold">Kivo Documentation</h1>
+          <h1 className="text-4xl font-extrabold text-white">Kivo Documentation</h1>
         </div>
         
-        <div className="space-y-12 text-brand-muted text-lg leading-relaxed">
-          <section>
-            <h2 className="text-2xl font-bold text-white mb-4">Installation</h2>
-            <p className="mb-4">Getting started with Kivo is straightforward. Ensure you have Rust stable (≥ 1.75) installed.</p>
-            <div className="bg-[#0a0a0f] p-6 rounded-xl font-mono text-sm border border-white/10">
-              <div className="text-slate-400 mb-2"># Clone the repository</div>
-              <div className="mb-2"><span className="text-brand-primary">git clone</span> https://github.com/Nikhil-Madaravena/Kivo-InMemory-Database.git</div>
-              <div className="mb-2"><span className="text-brand-primary">cd</span> Kivo-InMemory-Database</div>
-              <div className="text-slate-400 mt-4 mb-2"># Build and run</div>
-              <div><span className="text-brand-primary">cargo run</span> --release</div>
+        <div className="space-y-16 text-brand-muted text-lg leading-relaxed">
+          
+          {/* Overview */}
+          <section id="overview" className="scroll-mt-32">
+            <h2 className="text-2xl font-bold text-white mb-4 border-b border-white/10 pb-2">Overview</h2>
+            <p className="mb-4">
+              Kivo is a high-performance, in-memory key-value store built entirely in Rust. It utilizes the powerful <strong>Tokio</strong> async runtime and features a unique <strong>16-shard lock striping</strong> architecture. This allows multiple clients to perform operations in parallel without encountering the global lock bottleneck traditionally found in single-threaded systems like Redis.
+            </p>
+            <p>
+              Importantly, Kivo speaks the native <strong>Redis Serialization Protocol (RESP)</strong>. This means you do not need a custom client; you can drop Kivo into your existing stack and it will immediately work with <code>redis-cli</code>, <code>ioredis</code>, <code>redis-py</code>, or any other standard driver.
+            </p>
+          </section>
+
+          {/* Installation */}
+          <section id="installation" className="scroll-mt-32">
+            <h2 className="text-2xl font-bold text-white mb-4 border-b border-white/10 pb-2">Installation & Setup</h2>
+            <p className="mb-4">Building Kivo requires a stable Rust toolchain (≥ 1.75). It compiles to a single native binary.</p>
+            <div className="bg-[#0a0a0f] p-6 rounded-xl font-mono text-sm border border-white/10 shadow-inner mb-6">
+              <div className="text-slate-500 mb-2"># 1. Clone the repository</div>
+              <div className="mb-2 text-slate-300"><span className="text-brand-primary">git clone</span> https://github.com/Nikhil-Madaravena/Kivo-InMemory-Database.git</div>
+              <div className="mb-4 text-slate-300"><span className="text-brand-primary">cd</span> Kivo-InMemory-Database</div>
+              <div className="text-slate-500 mb-2"># 2. Build for production</div>
+              <div className="mb-4 text-slate-300"><span className="text-brand-primary">cargo build</span> --release</div>
+              <div className="text-slate-500 mb-2"># 3. Start the server</div>
+              <div className="text-slate-300"><span className="text-brand-primary">./target/release/kivo</span> --port 6379 --max-keys 100000</div>
+            </div>
+
+            <h3 className="text-xl font-bold text-white mt-8 mb-3">CLI Configuration Options</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm text-brand-muted border-collapse">
+                <thead>
+                  <tr className="border-b border-white/10 text-slate-300">
+                    <th className="py-3 px-4">Flag</th>
+                    <th className="py-3 px-4">Default</th>
+                    <th className="py-3 px-4">Description</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  <tr>
+                    <td className="py-3 px-4 font-mono text-brand-tertiary">--port -p</td>
+                    <td className="py-3 px-4 font-mono">6379</td>
+                    <td className="py-3 px-4">The port number the server listens on.</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3 px-4 font-mono text-brand-tertiary">--host</td>
+                    <td className="py-3 px-4 font-mono">127.0.0.1</td>
+                    <td className="py-3 px-4">IP address to bind the socket to.</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3 px-4 font-mono text-brand-tertiary">--password</td>
+                    <td className="py-3 px-4 font-mono">"secret"</td>
+                    <td className="py-3 px-4">Set empty ("") to disable AUTH requirement.</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3 px-4 font-mono text-brand-tertiary">--max-keys</td>
+                    <td className="py-3 px-4 font-mono">10000</td>
+                    <td className="py-3 px-4">Maximum number of keys across all shards before LRU eviction triggers.</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3 px-4 font-mono text-brand-tertiary">--db-file</td>
+                    <td className="py-3 px-4 font-mono">data.json</td>
+                    <td className="py-3 px-4">Path to the background persistence snapshot file.</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </section>
 
-          <section>
-            <h2 className="text-2xl font-bold text-white mb-4">CLI Options</h2>
-            <p className="mb-4">Configure Kivo exactly to your needs directly from the command line:</p>
-            <ul className="list-disc pl-6 space-y-2">
-              <li><code className="text-brand-tertiary bg-brand-tertiary/10 px-2 py-1 rounded">--port &lt;PORT&gt;</code> - The port to listen on (default 6379).</li>
-              <li><code className="text-brand-tertiary bg-brand-tertiary/10 px-2 py-1 rounded">--host &lt;HOST&gt;</code> - The IP address to bind to.</li>
-              <li><code className="text-brand-tertiary bg-brand-tertiary/10 px-2 py-1 rounded">--password &lt;PASS&gt;</code> - Required password for AUTH. Leave empty to disable.</li>
-              <li><code className="text-brand-tertiary bg-brand-tertiary/10 px-2 py-1 rounded">--max-keys &lt;NUM&gt;</code> - LRU limit for total keys across all shards.</li>
-              <li><code className="text-brand-tertiary bg-brand-tertiary/10 px-2 py-1 rounded">--db-file &lt;FILE&gt;</code> - Path to background snapshot JSON file.</li>
-            </ul>
-          </section>
-          
-          <section>
-            <h2 className="text-2xl font-bold text-white mb-4">Supported Data Types</h2>
-            <div className="grid sm:grid-cols-2 gap-6 mt-6">
-              <div className="p-6 bg-white/5 rounded-2xl border border-white/10">
-                <h3 className="font-bold text-white mb-2">Strings</h3>
-                <p className="text-sm">SET, GET, INCR, DECR, APPEND, MSET, MGET</p>
+          {/* Connecting Clients */}
+          <section id="connecting" className="scroll-mt-32">
+            <h2 className="text-2xl font-bold text-white mb-4 border-b border-white/10 pb-2">Connecting Clients</h2>
+            <p className="mb-6">Because Kivo implements RESP, connecting to it is identical to connecting to a Redis instance.</p>
+            
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-bold text-slate-200 mb-2">redis-cli (Terminal)</h3>
+                <div className="bg-[#0a0a0f] p-4 rounded-xl font-mono text-sm border border-white/10 text-slate-300">
+                  <span className="text-brand-primary">redis-cli</span> -h 127.0.0.1 -p 6379 -a secret
+                </div>
               </div>
-              <div className="p-6 bg-white/5 rounded-2xl border border-white/10">
-                <h3 className="font-bold text-white mb-2">Lists</h3>
-                <p className="text-sm">LPUSH, RPUSH, LPOP, RPOP, LRANGE, LINDEX, LTRIM</p>
+
+              <div>
+                <h3 className="text-lg font-bold text-slate-200 mb-2">Node.js (ioredis)</h3>
+                <div className="bg-[#0a0a0f] p-4 rounded-xl font-mono text-sm border border-white/10 text-slate-300 whitespace-pre">
+<span className="text-brand-primary">const</span> Redis = <span className="text-brand-tertiary">require</span>(<span className="text-green-400">'ioredis'</span>);{'\n'}
+<span className="text-brand-primary">const</span> client = <span className="text-brand-primary">new</span> Redis({'{'}{'\n'}
+{'  '}host: <span className="text-green-400">'127.0.0.1'</span>,{'\n'}
+{'  '}port: <span className="text-orange-400">6379</span>,{'\n'}
+{'  '}password: <span className="text-green-400">'secret'</span>{'\n'}
+{'}'});{'\n\n'}
+<span className="text-brand-primary">await</span> client.set(<span className="text-green-400">'framework'</span>, <span className="text-green-400">'react'</span>);{'\n'}
+<span className="text-brand-tertiary">console</span>.log(<span className="text-brand-primary">await</span> client.get(<span className="text-green-400">'framework'</span>)); <span className="text-slate-500">// 'react'</span>
+                </div>
               </div>
-              <div className="p-6 bg-white/5 rounded-2xl border border-white/10">
-                <h3 className="font-bold text-white mb-2">Hashes</h3>
-                <p className="text-sm">HSET, HGET, HGETALL, HDEL, HLEN, HSCAN</p>
-              </div>
-              <div className="p-6 bg-white/5 rounded-2xl border border-white/10">
-                <h3 className="font-bold text-white mb-2">Sets & Sorted Sets</h3>
-                <p className="text-sm">SADD, SMEMBERS, SUNION, ZADD, ZRANGE, ZSCAN</p>
+
+              <div>
+                <h3 className="text-lg font-bold text-slate-200 mb-2">Python (redis-py)</h3>
+                <div className="bg-[#0a0a0f] p-4 rounded-xl font-mono text-sm border border-white/10 text-slate-300 whitespace-pre">
+<span className="text-brand-primary">import</span> redis{'\n\n'}
+r = redis.Redis(host=<span className="text-green-400">'127.0.0.1'</span>, port=<span className="text-orange-400">6379</span>, password=<span className="text-green-400">'secret'</span>){'\n'}
+r.set(<span className="text-green-400">'language'</span>, <span className="text-green-400">'rust'</span>){'\n'}
+<span className="text-brand-tertiary">print</span>(r.get(<span className="text-green-400">'language'</span>)) <span className="text-slate-500"># b'rust'</span>
+                </div>
               </div>
             </div>
           </section>
+
+          {/* Data Types */}
+          <section id="datatypes" className="scroll-mt-32">
+            <h2 className="text-2xl font-bold text-white mb-4 border-b border-white/10 pb-2">Data Types & Commands</h2>
+            <p className="mb-6">Kivo fully supports the 5 core Redis data structures along with iteration (SCAN) variants.</p>
+            
+            <div className="grid gap-6">
+              <div className="p-6 bg-white/5 rounded-2xl border border-white/10 hover:border-brand-primary/30 transition-colors">
+                <h3 className="text-xl font-bold text-white mb-3 flex items-center gap-2"><span className="text-brand-primary">1.</span> Strings</h3>
+                <p className="text-sm mb-4">The most basic data type. Supports raw strings, integers, and floats natively.</p>
+                <div className="bg-[#0a0a0f] p-3 rounded-lg font-mono text-xs text-slate-300">
+                  <span className="text-brand-primary">SET</span> key value [EX seconds] [PX millis] [NX|XX]<br/>
+                  <span className="text-brand-primary">GET</span> key<br/>
+                  <span className="text-brand-primary">INCRBY</span> key 5<br/>
+                  <span className="text-brand-primary">MSET</span> k1 v1 k2 v2
+                </div>
+              </div>
+
+              <div className="p-6 bg-white/5 rounded-2xl border border-white/10 hover:border-brand-primary/30 transition-colors">
+                <h3 className="text-xl font-bold text-white mb-3 flex items-center gap-2"><span className="text-brand-primary">2.</span> Hash Maps</h3>
+                <p className="text-sm mb-4">Maps between string fields and string values. Excellent for representing objects.</p>
+                <div className="bg-[#0a0a0f] p-3 rounded-lg font-mono text-xs text-slate-300">
+                  <span className="text-brand-primary">HSET</span> user:1000 name "John" age 30<br/>
+                  <span className="text-brand-primary">HGET</span> user:1000 name<br/>
+                  <span className="text-brand-primary">HGETALL</span> user:1000<br/>
+                  <span className="text-brand-primary">HSCAN</span> user:1000 0 MATCH *a* COUNT 10
+                </div>
+              </div>
+
+              <div className="p-6 bg-white/5 rounded-2xl border border-white/10 hover:border-brand-primary/30 transition-colors">
+                <h3 className="text-xl font-bold text-white mb-3 flex items-center gap-2"><span className="text-brand-primary">3.</span> Lists</h3>
+                <p className="text-sm mb-4">Linked-list style arrays. Supports fast push/pop operations from both head and tail.</p>
+                <div className="bg-[#0a0a0f] p-3 rounded-lg font-mono text-xs text-slate-300">
+                  <span className="text-brand-primary">LPUSH</span> mylist "world"<br/>
+                  <span className="text-brand-primary">RPUSH</span> mylist "hello"<br/>
+                  <span className="text-brand-primary">LRANGE</span> mylist 0 -1<br/>
+                  <span className="text-brand-primary">LTRIM</span> mylist 0 99
+                </div>
+              </div>
+
+              <div className="p-6 bg-white/5 rounded-2xl border border-white/10 hover:border-brand-primary/30 transition-colors">
+                <h3 className="text-xl font-bold text-white mb-3 flex items-center gap-2"><span className="text-brand-primary">4.</span> Sets & Sorted Sets (ZSet)</h3>
+                <p className="text-sm mb-4">Unique collections. Sorted Sets attach a floating point score to each element for automatic sorting.</p>
+                <div className="bg-[#0a0a0f] p-3 rounded-lg font-mono text-xs text-slate-300">
+                  <span className="text-brand-primary">SADD</span> myset "a" "b" "c"<br/>
+                  <span className="text-brand-primary">ZADD</span> leaderboard 100 "player1" 250 "player2"<br/>
+                  <span className="text-brand-primary">ZRANGEBYSCORE</span> leaderboard 100 300<br/>
+                  <span className="text-brand-primary">ZPOPMAX</span> leaderboard 1
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Advanced Features */}
+          <section id="advanced" className="scroll-mt-32">
+            <h2 className="text-2xl font-bold text-white mb-4 border-b border-white/10 pb-2">Advanced Features</h2>
+            
+            <div className="mb-8">
+              <h3 className="text-xl font-bold text-white mb-2">Transactions (MULTI / EXEC)</h3>
+              <p className="mb-4 text-sm">Kivo supports transactional block execution. Commands queued between MULTI and EXEC are executed atomically.</p>
+              <div className="bg-[#0a0a0f] p-4 rounded-xl font-mono text-sm border border-white/10 text-slate-300">
+                <span className="text-brand-primary">MULTI</span><br/>
+                <span className="text-brand-primary">INCR</span> counter1<br/>
+                <span className="text-brand-primary">INCR</span> counter2<br/>
+                <span className="text-brand-primary">EXEC</span>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-xl font-bold text-white mb-2">Keyspace Iteration (SCAN)</h3>
+              <p className="mb-4 text-sm">Do not use <code>KEYS *</code> in production. Use cursor-based iteration to traverse the dataset safely without blocking other clients.</p>
+              <div className="bg-[#0a0a0f] p-4 rounded-xl font-mono text-sm border border-white/10 text-slate-300">
+                <span className="text-slate-500"># Syntax: SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]</span><br/>
+                <span className="text-brand-primary">SCAN</span> 0 MATCH user:* TYPE hash COUNT 100
+              </div>
+            </div>
+          </section>
+
         </div>
-      </div>
-    </main>
+      </main>
+    </div>
   );
 };
 
