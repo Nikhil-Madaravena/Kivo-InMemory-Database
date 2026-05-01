@@ -6,7 +6,7 @@ import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <BrowserRouter basename="/Kivo-InMemory-Database">
+    <BrowserRouter basename="/kivo-website">
       <App />
     </BrowserRouter>
   </React.StrictMode>,
