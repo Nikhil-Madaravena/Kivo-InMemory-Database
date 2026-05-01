@@ -4,7 +4,7 @@
 //! `std::sync::RwLock`, so concurrent clients can operate on different
 //! key-spaces in parallel without fighting over a single global lock.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 use std::sync::RwLock;
@@ -69,6 +69,9 @@ pub enum DataType {
     String(String),
     List(VecDeque<String>),
     Hash(HashMap<String, String>),
+    Set(HashSet<String>),
+    /// Sorted set: member -> score. BTreeMap<score_bits, member> for ordering.
+    ZSet(HashMap<String, f64>),
 }
 
 impl DataType {
@@ -77,6 +80,8 @@ impl DataType {
             DataType::String(_) => "string",
             DataType::List(_)   => "list",
             DataType::Hash(_)   => "hash",
+            DataType::Set(_)    => "set",
+            DataType::ZSet(_)   => "zset",
         }
     }
 }
@@ -676,11 +681,423 @@ impl KvStore {
             },
         }
     }
+
+    // --- List extras -------------------------------------------------------
+
+    pub fn lset(&self, key: &str, index: i64, val: String) -> KvResult<()> {
+        let mut s = self.write_shard(key);
+        match s.get_live_mut(key) {
+            None => Err(KvError::NotFound),
+            Some(e) => match &mut e.value {
+                DataType::List(l) => {
+                    let len = l.len() as i64;
+                    let idx = normalize_index(index, len);
+                    if idx < 0 || idx >= len { return Err(KvError::NotFound); }
+                    l[idx as usize] = val;
+                    Ok(())
+                }
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn lrem(&self, key: &str, count: i64, val: &str) -> KvResult<i64> {
+        let mut s = self.write_shard(key);
+        match s.get_live_mut(key) {
+            None => Ok(0),
+            Some(e) => match &mut e.value {
+                DataType::List(l) => {
+                    let mut removed = 0i64;
+                    if count == 0 {
+                        l.retain(|v| { if v == val { removed += 1; false } else { true } });
+                    } else if count > 0 {
+                        let mut new = VecDeque::with_capacity(l.len());
+                        for v in l.drain(..) {
+                            if v == val && removed < count { removed += 1; } else { new.push_back(v); }
+                        }
+                        *l = new;
+                    } else {
+                        let mut rev: Vec<_> = l.drain(..).collect();
+                        rev.retain(|v| if v == val && removed < count.abs() { removed += 1; false } else { true });
+                        *l = rev.into_iter().collect();
+                    }
+                    Ok(removed)
+                }
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn ltrim(&self, key: &str, start: i64, stop: i64) -> KvResult<()> {
+        let mut s = self.write_shard(key);
+        match s.get_live_mut(key) {
+            None => Ok(()),
+            Some(e) => match &mut e.value {
+                DataType::List(l) => {
+                    let len = l.len() as i64;
+                    let s_idx = normalize_index(start, len).max(0) as usize;
+                    let e_idx = (normalize_index(stop, len) + 1).min(len) as usize;
+                    if s_idx >= e_idx { l.clear(); return Ok(()); }
+                    let trimmed: VecDeque<_> = l.drain(s_idx..e_idx).collect();
+                    *l = trimmed;
+                    Ok(())
+                }
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    // --- Sets ---------------------------------------------------------------
+
+    pub fn sadd(&self, key: String, members: &[String]) -> KvResult<i64> {
+        let mut s = self.write_shard(&key);
+        let entry = s.entries.entry(key).or_insert_with(|| Entry::new(DataType::Set(HashSet::new())));
+        if entry.is_expired() { *entry = Entry::new(DataType::Set(HashSet::new())); }
+        entry.last_accessed_ms = now_ms();
+        match &mut entry.value {
+            DataType::Set(set) => {
+                let added = members.iter().filter(|m| set.insert((*m).clone())).count();
+                Ok(added as i64)
+            }
+            _ => Err(KvError::WrongType),
+        }
+    }
+
+    pub fn srem(&self, key: &str, members: &[String]) -> KvResult<i64> {
+        let mut s = self.write_shard(key);
+        match s.get_live_mut(key) {
+            None => Ok(0),
+            Some(e) => match &mut e.value {
+                DataType::Set(set) => Ok(members.iter().filter(|m| set.remove(m.as_str())).count() as i64),
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn smembers(&self, key: &str) -> KvResult<Vec<String>> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(vec![]),
+            Some(e) => match &e.value {
+                DataType::Set(set) => Ok(set.iter().cloned().collect()),
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn scard(&self, key: &str) -> KvResult<usize> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(0),
+            Some(e) => match &e.value {
+                DataType::Set(set) => Ok(set.len()),
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn sismember(&self, key: &str, member: &str) -> KvResult<bool> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(false),
+            Some(e) => match &e.value {
+                DataType::Set(set) => Ok(set.contains(member)),
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn spop(&self, key: &str) -> KvResult<Option<String>> {
+        let mut s = self.write_shard(key);
+        match s.get_live_mut(key) {
+            None => Ok(None),
+            Some(e) => match &mut e.value {
+                DataType::Set(set) => {
+                    // pick pseudo-random element using time as noise
+                    let pick = (now_ms() as usize).wrapping_rem(set.len().max(1));
+                    let key = set.iter().nth(pick).cloned();
+                    if let Some(ref k) = key { set.remove(k); }
+                    Ok(key)
+                }
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn srandmember(&self, key: &str) -> KvResult<Option<String>> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(None),
+            Some(e) => match &e.value {
+                DataType::Set(set) => {
+                    let pick = (now_ms() as usize).wrapping_rem(set.len().max(1));
+                    Ok(set.iter().nth(pick).cloned())
+                }
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn smove(&self, src: &str, dst: String, member: String) -> KvResult<bool> {
+        // Remove from src first
+        let removed = {
+            let mut s = self.write_shard(src);
+            match s.get_live_mut(src) {
+                None => return Ok(false),
+                Some(e) => match &mut e.value {
+                    DataType::Set(set) => set.remove(&member),
+                    _ => return Err(KvError::WrongType),
+                },
+            }
+        };
+        if !removed { return Ok(false); }
+        // Add to dst
+        self.sadd(dst, &[member])?;
+        Ok(true)
+    }
+
+    fn get_set_snapshot(&self, key: &str) -> KvResult<HashSet<String>> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(HashSet::new()),
+            Some(e) => match &e.value {
+                DataType::Set(set) => Ok(set.clone()),
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn sunion(&self, keys: &[String]) -> KvResult<Vec<String>> {
+        let mut result = HashSet::new();
+        for k in keys { result.extend(self.get_set_snapshot(k)?); }
+        Ok(result.into_iter().collect())
+    }
+
+    pub fn sinter(&self, keys: &[String]) -> KvResult<Vec<String>> {
+        if keys.is_empty() { return Ok(vec![]); }
+        let mut result = self.get_set_snapshot(&keys[0])?;
+        for k in &keys[1..] { let s = self.get_set_snapshot(k)?; result.retain(|m| s.contains(m)); }
+        Ok(result.into_iter().collect())
+    }
+
+    pub fn sdiff(&self, keys: &[String]) -> KvResult<Vec<String>> {
+        if keys.is_empty() { return Ok(vec![]); }
+        let mut result = self.get_set_snapshot(&keys[0])?;
+        for k in &keys[1..] { let s = self.get_set_snapshot(k)?; result.retain(|m| !s.contains(m)); }
+        Ok(result.into_iter().collect())
+    }
+
+    pub fn sunionstore(&self, dst: String, keys: &[String]) -> KvResult<usize> {
+        let members: Vec<String> = self.sunion(keys)?;
+        let len = members.len();
+        let mut s = self.write_shard(&dst);
+        s.entries.insert(dst, Entry::new(DataType::Set(members.into_iter().collect())));
+        Ok(len)
+    }
+
+    pub fn sinterstore(&self, dst: String, keys: &[String]) -> KvResult<usize> {
+        let members: Vec<String> = self.sinter(keys)?;
+        let len = members.len();
+        let mut s = self.write_shard(&dst);
+        s.entries.insert(dst, Entry::new(DataType::Set(members.into_iter().collect())));
+        Ok(len)
+    }
+
+    pub fn sdiffstore(&self, dst: String, keys: &[String]) -> KvResult<usize> {
+        let members: Vec<String> = self.sdiff(keys)?;
+        let len = members.len();
+        let mut s = self.write_shard(&dst);
+        s.entries.insert(dst, Entry::new(DataType::Set(members.into_iter().collect())));
+        Ok(len)
+    }
+
+    // --- Sorted Sets --------------------------------------------------------
+
+    /// Returns sorted (score, member) pairs for a ZSet.
+    fn zset_sorted(map: &HashMap<String, f64>) -> Vec<(f64, &str)> {
+        let mut v: Vec<(f64, &str)> = map.iter().map(|(m, &sc)| (sc, m.as_str())).collect();
+        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.cmp(b.1)));
+        v
+    }
+
+    pub fn zadd(&self, key: String, pairs: &[(f64, String)]) -> KvResult<i64> {
+        let mut s = self.write_shard(&key);
+        let entry = s.entries.entry(key).or_insert_with(|| Entry::new(DataType::ZSet(HashMap::new())));
+        if entry.is_expired() { *entry = Entry::new(DataType::ZSet(HashMap::new())); }
+        entry.last_accessed_ms = now_ms();
+        match &mut entry.value {
+            DataType::ZSet(map) => {
+                let added = pairs.iter().filter(|(_, m)| !map.contains_key(m)).count();
+                for (sc, m) in pairs { map.insert(m.clone(), *sc); }
+                Ok(added as i64)
+            }
+            _ => Err(KvError::WrongType),
+        }
+    }
+
+    pub fn zrem(&self, key: &str, members: &[String]) -> KvResult<i64> {
+        let mut s = self.write_shard(key);
+        match s.get_live_mut(key) {
+            None => Ok(0),
+            Some(e) => match &mut e.value {
+                DataType::ZSet(map) => Ok(members.iter().filter(|m| map.remove(m.as_str()).is_some()).count() as i64),
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn zscore(&self, key: &str, member: &str) -> KvResult<Option<f64>> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(None),
+            Some(e) => match &e.value {
+                DataType::ZSet(map) => Ok(map.get(member).copied()),
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn zincrby(&self, key: String, delta: f64, member: String) -> KvResult<f64> {
+        let mut s = self.write_shard(&key);
+        let entry = s.entries.entry(key).or_insert_with(|| Entry::new(DataType::ZSet(HashMap::new())));
+        if entry.is_expired() { *entry = Entry::new(DataType::ZSet(HashMap::new())); }
+        match &mut entry.value {
+            DataType::ZSet(map) => {
+                let score = map.entry(member).or_insert(0.0);
+                *score += delta;
+                Ok(*score)
+            }
+            _ => Err(KvError::WrongType),
+        }
+    }
+
+    pub fn zcard(&self, key: &str) -> KvResult<usize> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(0),
+            Some(e) => match &e.value {
+                DataType::ZSet(map) => Ok(map.len()),
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn zrank(&self, key: &str, member: &str, reverse: bool) -> KvResult<Option<i64>> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(None),
+            Some(e) => match &e.value {
+                DataType::ZSet(map) => {
+                    let sorted = Self::zset_sorted(map);
+                    let pos = sorted.iter().position(|(_, m)| *m == member);
+                    Ok(pos.map(|i| if reverse { (sorted.len() - 1 - i) as i64 } else { i as i64 }))
+                }
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn zrange(&self, key: &str, start: i64, stop: i64, rev: bool, with_scores: bool) -> KvResult<Vec<String>> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(vec![]),
+            Some(e) => match &e.value {
+                DataType::ZSet(map) => {
+                    let mut sorted = Self::zset_sorted(map);
+                    if rev { sorted.reverse(); }
+                    let len = sorted.len() as i64;
+                    let s_idx = normalize_index(start, len).max(0) as usize;
+                    let e_idx = (normalize_index(stop, len) + 1).min(len) as usize;
+                    if s_idx >= e_idx { return Ok(vec![]); }
+                    let mut out = vec![];
+                    for (sc, m) in &sorted[s_idx..e_idx] {
+                        out.push(m.to_string());
+                        if with_scores { out.push(format_score(*sc)); }
+                    }
+                    Ok(out)
+                }
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn zrangebyscore(&self, key: &str, min: f64, max: f64, with_scores: bool) -> KvResult<Vec<String>> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(vec![]),
+            Some(e) => match &e.value {
+                DataType::ZSet(map) => {
+                    let sorted = Self::zset_sorted(map);
+                    let mut out = vec![];
+                    for (sc, m) in sorted.into_iter().filter(|(sc, _)| *sc >= min && *sc <= max) {
+                        out.push(m.to_string());
+                        if with_scores { out.push(format_score(sc)); }
+                    }
+                    Ok(out)
+                }
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn zcount(&self, key: &str, min: f64, max: f64) -> KvResult<i64> {
+        let s = self.read_shard(key);
+        match s.get_live(key) {
+            None => Ok(0),
+            Some(e) => match &e.value {
+                DataType::ZSet(map) => Ok(map.values().filter(|&&sc| sc >= min && sc <= max).count() as i64),
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
+
+    pub fn zpopmin(&self, key: &str) -> KvResult<Vec<String>> {
+        self.zpop(key, false)
+    }
+
+    pub fn zpopmax(&self, key: &str) -> KvResult<Vec<String>> {
+        self.zpop(key, true)
+    }
+
+    fn zpop(&self, key: &str, max: bool) -> KvResult<Vec<String>> {
+        let mut s = self.write_shard(key);
+        match s.get_live_mut(key) {
+            None => Ok(vec![]),
+            Some(e) => match &mut e.value {
+                DataType::ZSet(map) => {
+                    if map.is_empty() { return Ok(vec![]); }
+                    let sorted = Self::zset_sorted(map);
+                    let (sc, m) = if max { *sorted.last().unwrap() } else { *sorted.first().unwrap() };
+                    let m = m.to_string();
+                    map.remove(&m);
+                    Ok(vec![m, format_score(sc)])
+                }
+                _ => Err(KvError::WrongType),
+            },
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+
+/// Format a float score the Redis way: integers drop the trailing ".0".
+pub fn format_score(sc: f64) -> String {
+    if sc == f64::INFINITY        { return "+inf".to_string(); }
+    if sc == f64::NEG_INFINITY    { return "-inf".to_string(); }
+    if sc.fract() == 0.0 && sc.abs() < 1e15 { format!("{}", sc as i64) }
+    else                          { format!("{sc}") }
+}
+
+/// Parse a score token, accepting "+inf", "-inf", and numeric strings.
+pub fn parse_score(s: &str) -> Option<f64> {
+    match s {
+        "+inf" | "inf"  => Some(f64::INFINITY),
+        "-inf"          => Some(f64::NEG_INFINITY),
+        _               => s.parse().ok(),
+    }
+}
 
 /// Convert a Redis-style negative index to an absolute index.
 fn normalize_index(idx: i64, len: i64) -> i64 {

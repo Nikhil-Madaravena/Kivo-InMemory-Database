@@ -7,7 +7,7 @@ use clap::Parser;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
-use mini_kv::{KvStore, KvError};
+use mini_kv::{KvStore, KvError, parse_score};
 
 // ---------------------------------------------------------------------------
 // CLI configuration
@@ -515,6 +515,180 @@ fn execute_command(store: &KvStore, cmd: &str, parts: &[String]) -> String {
             let start: i64 = match parts[2].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
             let stop:  i64 = match parts[3].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
             resp_kv_result(store.lrange(&parts[1], start, stop), |v| resp_array(&v))
+        }
+
+        "LSET"    => {
+            args_eq!(4);
+            let idx: i64 = match parts[2].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
+            resp_kv_result(store.lset(&parts[1], idx, parts[3].clone()), |_| resp_ok().to_string())
+        }
+        "LREM"    => {
+            args_eq!(4);
+            let count: i64 = match parts[2].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
+            resp_kv_result(store.lrem(&parts[1], count, &parts[3]), |n| resp_int(n))
+        }
+        "LTRIM"   => {
+            args_eq!(4);
+            let start: i64 = match parts[2].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
+            let stop:  i64 = match parts[3].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
+            resp_kv_result(store.ltrim(&parts[1], start, stop), |_| resp_ok().to_string())
+        }
+
+        // --- Sets ---
+        "SADD"    => {
+            args_ge!(3);
+            resp_kv_result(store.sadd(parts[1].clone(), &parts[2..]), |n| resp_int(n))
+        }
+        "SREM"    => {
+            args_ge!(3);
+            resp_kv_result(store.srem(&parts[1], &parts[2..]), |n| resp_int(n))
+        }
+        "SMEMBERS"    => { args_eq!(2); resp_kv_result(store.smembers(&parts[1]), |v| resp_array(&v)) }
+        "SCARD"       => { args_eq!(2); resp_kv_result(store.scard(&parts[1]),    |n| resp_int(n as i64)) }
+        "SISMEMBER"   => {
+            args_eq!(3);
+            resp_kv_result(store.sismember(&parts[1], &parts[2]), |b| resp_int(b as i64))
+        }
+        "SPOP"        => { args_eq!(2); resp_kv_result(store.spop(&parts[1]),         resp_opt_bulk) }
+        "SRANDMEMBER" => { args_eq!(2); resp_kv_result(store.srandmember(&parts[1]),  resp_opt_bulk) }
+        "SMOVE"       => {
+            args_eq!(4);
+            resp_kv_result(store.smove(&parts[1], parts[2].clone(), parts[3].clone()), |b| resp_int(b as i64))
+        }
+        "SUNION"  => { args_ge!(2); resp_kv_result(store.sunion(&parts[1..]),  |v| resp_array(&v)) }
+        "SINTER"  => { args_ge!(2); resp_kv_result(store.sinter(&parts[1..]),  |v| resp_array(&v)) }
+        "SDIFF"   => { args_ge!(2); resp_kv_result(store.sdiff(&parts[1..]),   |v| resp_array(&v)) }
+        "SUNIONSTORE" => {
+            args_ge!(3);
+            resp_kv_result(store.sunionstore(parts[1].clone(), &parts[2..]), |n| resp_int(n as i64))
+        }
+        "SINTERSTORE" => {
+            args_ge!(3);
+            resp_kv_result(store.sinterstore(parts[1].clone(), &parts[2..]), |n| resp_int(n as i64))
+        }
+        "SDIFFSTORE"  => {
+            args_ge!(3);
+            resp_kv_result(store.sdiffstore(parts[1].clone(), &parts[2..]), |n| resp_int(n as i64))
+        }
+
+        // --- Sorted Sets ---
+        "ZADD" => {
+            // ZADD key [NX|XX] [GT|LT] [CH] [INCR] score member [score member …]
+            args_ge!(4);
+            if (parts.len() - 2) % 2 != 0 {
+                return resp_err("wrong number of arguments for 'zadd' command");
+            }
+            let pairs: Vec<(f64, String)> = {
+                let mut v = vec![];
+                let mut i = 2;
+                while i + 1 < parts.len() {
+                    let sc = match parse_score(&parts[i]) {
+                        Some(s) => s,
+                        None    => return resp_err("value is not a valid float"),
+                    };
+                    v.push((sc, parts[i + 1].clone()));
+                    i += 2;
+                }
+                v
+            };
+            resp_kv_result(store.zadd(parts[1].clone(), &pairs), |n| resp_int(n))
+        }
+        "ZREM"    => { args_ge!(3); resp_kv_result(store.zrem(&parts[1], &parts[2..]), |n| resp_int(n)) }
+        "ZSCORE"  => {
+            args_eq!(3);
+            resp_kv_result(store.zscore(&parts[1], &parts[2]), |sc| {
+                match sc { None => resp_nil().to_string(), Some(s) => resp_bulk(&mini_kv::format_score(s)) }
+            })
+        }
+        "ZINCRBY" => {
+            args_eq!(4);
+            let delta = match parse_score(&parts[2]) { Some(v) => v, None => return resp_err("value is not a valid float") };
+            resp_kv_result(store.zincrby(parts[1].clone(), delta, parts[3].clone()), |s| resp_bulk(&mini_kv::format_score(s)))
+        }
+        "ZCARD"      => { args_eq!(2); resp_kv_result(store.zcard(&parts[1]), |n| resp_int(n as i64)) }
+        "ZRANK"      => {
+            args_eq!(3);
+            resp_kv_result(store.zrank(&parts[1], &parts[2], false), |r| match r { None => resp_nil().to_string(), Some(n) => resp_int(n) })
+        }
+        "ZREVRANK"   => {
+            args_eq!(3);
+            resp_kv_result(store.zrank(&parts[1], &parts[2], true),  |r| match r { None => resp_nil().to_string(), Some(n) => resp_int(n) })
+        }
+        "ZRANGE" => {
+            args_ge!(4);
+            let start: i64 = match parts[2].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
+            let stop:  i64 = match parts[3].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
+            let with_scores = parts.get(4).map(|s| s.to_uppercase() == "WITHSCORES").unwrap_or(false);
+            resp_kv_result(store.zrange(&parts[1], start, stop, false, with_scores), |v| resp_array(&v))
+        }
+        "ZREVRANGE" => {
+            args_ge!(4);
+            let start: i64 = match parts[2].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
+            let stop:  i64 = match parts[3].parse() { Ok(v) => v, Err(_) => return KvError::NotInteger.to_resp() };
+            let with_scores = parts.get(4).map(|s| s.to_uppercase() == "WITHSCORES").unwrap_or(false);
+            resp_kv_result(store.zrange(&parts[1], start, stop, true, with_scores), |v| resp_array(&v))
+        }
+        "ZRANGEBYSCORE" => {
+            args_ge!(4);
+            let min = match parse_score(&parts[2]) { Some(v) => v, None => return resp_err("min is not a float") };
+            let max = match parse_score(&parts[3]) { Some(v) => v, None => return resp_err("max is not a float") };
+            let with_scores = parts.get(4).map(|s| s.to_uppercase() == "WITHSCORES").unwrap_or(false);
+            resp_kv_result(store.zrangebyscore(&parts[1], min, max, with_scores), |v| resp_array(&v))
+        }
+        "ZREVRANGEBYSCORE" => {
+            args_ge!(4);
+            // Redis reverses min/max args in ZREVRANGEBYSCORE
+            let max = match parse_score(&parts[2]) { Some(v) => v, None => return resp_err("max is not a float") };
+            let min = match parse_score(&parts[3]) { Some(v) => v, None => return resp_err("min is not a float") };
+            let with_scores = parts.get(4).map(|s| s.to_uppercase() == "WITHSCORES").unwrap_or(false);
+            resp_kv_result(store.zrangebyscore(&parts[1], min, max, with_scores), |mut v| { v.reverse(); resp_array(&v) })
+        }
+        "ZCOUNT"  => {
+            args_eq!(4);
+            let min = match parse_score(&parts[2]) { Some(v) => v, None => return resp_err("min is not a float") };
+            let max = match parse_score(&parts[3]) { Some(v) => v, None => return resp_err("max is not a float") };
+            resp_kv_result(store.zcount(&parts[1], min, max), |n| resp_int(n))
+        }
+        "ZPOPMIN" => { args_eq!(2); resp_kv_result(store.zpopmin(&parts[1]), |v| resp_array(&v)) }
+        "ZPOPMAX" => { args_eq!(2); resp_kv_result(store.zpopmax(&parts[1]), |v| resp_array(&v)) }
+
+        // --- Cursor-based iteration (simplified: always returns all in one shot) ---
+        "SCAN" => {
+            // SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]
+            let mut pattern = "*".to_string();
+            let mut type_filter: Option<String> = None;
+            let mut i = 2;
+            while i + 1 < parts.len() {
+                match parts[i].to_uppercase().as_str() {
+                    "MATCH" => { pattern = parts[i + 1].clone(); i += 2; }
+                    "COUNT" => { i += 2; } // hint; we always return all
+                    "TYPE"  => { type_filter = Some(parts[i + 1].to_lowercase()); i += 2; }
+                    _       => { i += 1; }
+                }
+            }
+            let keys = store.keys(&pattern);
+            let keys: Vec<String> = match type_filter {
+                None    => keys,
+                Some(t) => keys.into_iter().filter(|k| store.type_of(k) == t).collect(),
+            };
+            // Return cursor "0" (done) + array of keys
+            format!("*2\r\n$1\r\n0\r\n{}", resp_array(&keys))
+        }
+        "HSCAN" => {
+            args_ge!(2);
+            let all = store.hgetall(&parts[1]).unwrap_or_default();
+            let flat: Vec<String> = all.into_iter().flat_map(|(k, v)| [k, v]).collect();
+            format!("*2\r\n$1\r\n0\r\n{}", resp_array(&flat))
+        }
+        "SSCAN" => {
+            args_ge!(2);
+            let members = store.smembers(&parts[1]).unwrap_or_default();
+            format!("*2\r\n$1\r\n0\r\n{}", resp_array(&members))
+        }
+        "ZSCAN" => {
+            args_ge!(2);
+            let members = store.zrange(&parts[1], 0, -1, false, true).unwrap_or_default();
+            format!("*2\r\n$1\r\n0\r\n{}", resp_array(&members))
         }
 
         _ => resp_err(&format!("unknown command `{}`, with args beginning with: {}", cmd.to_lowercase(),

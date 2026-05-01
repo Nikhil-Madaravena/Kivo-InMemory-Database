@@ -199,6 +199,89 @@ try:
     cmd(s, "FLUSHALL")
     chk("FLUSHALL", cmd(s, "DBSIZE"), 0)
 
+    # --- List extras ---
+    cmd(s, "FLUSHALL")
+    cmd(s, "RPUSH", "lst", "a")
+    cmd(s, "RPUSH", "lst", "b")
+    cmd(s, "RPUSH", "lst", "c")
+    cmd(s, "RPUSH", "lst", "b")
+    cmd(s, "RPUSH", "lst", "b")
+
+    chk("LSET",    cmd(s, "LSET", "lst", "0", "X"),          "OK")
+    chk("LSET get",cmd(s, "LINDEX", "lst", "0"),             "X")
+    chk("LREM 2",  cmd(s, "LREM", "lst", "2", "b"),          2)
+    chk("LREM len",cmd(s, "LLEN", "lst"),                    3)   # X c b
+    chk("LTRIM",   cmd(s, "LTRIM", "lst", "1", "2"),         "OK")
+    chk("LTRIM len",cmd(s, "LLEN", "lst"),                   2)
+
+    # --- Sets ---
+    cmd(s, "FLUSHALL")
+    chk("SADD",        cmd(s, "SADD", "s", "a", "b", "c"),  3)
+    chk("SADD dup",    cmd(s, "SADD", "s", "a"),             0)
+    chk("SCARD",       cmd(s, "SCARD", "s"),                 3)
+    chk("SISMEMBER y", cmd(s, "SISMEMBER", "s", "a"),        1)
+    chk("SISMEMBER n", cmd(s, "SISMEMBER", "s", "z"),        0)
+    chk("SMEMBERS",    sorted(cmd(s, "SMEMBERS", "s")),      ["a","b","c"])
+    chk("SREM",        cmd(s, "SREM", "s", "a", "b"),        2)
+    chk("SCARD after", cmd(s, "SCARD", "s"),                 1)
+
+    cmd(s, "SADD", "s1", "a", "b", "c")
+    cmd(s, "SADD", "s2", "b", "c", "d")
+    chk("SUNION",  sorted(cmd(s, "SUNION", "s1", "s2")),  ["a","b","c","d"])
+    chk("SINTER",  sorted(cmd(s, "SINTER", "s1", "s2")),  ["b","c"])
+    chk("SDIFF",   sorted(cmd(s, "SDIFF",  "s1", "s2")),  ["a"])
+
+    chk("SMOVE",   cmd(s, "SMOVE", "s1", "s2", "a"),         1)
+    chk("SMOVE src",sorted(cmd(s, "SMEMBERS", "s1")),        ["b","c"])
+    chk("SMOVE dst",sorted(cmd(s, "SMEMBERS", "s2")),        ["a","b","c","d"])
+
+    chk("SUNIONSTORE", cmd(s, "SUNIONSTORE", "su", "s1", "s2"), 4)
+    chk("SINTERSTORE", cmd(s, "SINTERSTORE", "si", "s1", "s2"), 2)
+    chk("SDIFFSTORE",  cmd(s, "SDIFFSTORE",  "sd", "s2", "s1"), 2)  # d and a
+
+    spop_result = cmd(s, "SPOP", "s1")
+    chk("SPOP type", isinstance(spop_result, str), True)
+    srand = cmd(s, "SRANDMEMBER", "s2")
+    chk("SRANDMEMBER type", isinstance(srand, str), True)
+
+    chk("TYPE set", cmd(s, "TYPE", "s1"), "set")
+
+    # --- Sorted Sets ---
+    cmd(s, "FLUSHALL")
+    chk("ZADD",       cmd(s, "ZADD", "z", "1", "a", "2", "b", "3", "c"),  3)
+    chk("ZADD dup",   cmd(s, "ZADD", "z", "5", "a"),                       0)  # update, not new
+    chk("ZCARD",      cmd(s, "ZCARD", "z"),                                 3)
+    chk("ZSCORE",     cmd(s, "ZSCORE", "z", "a"),                          "5")
+    chk("ZSCORE nil", cmd(s, "ZSCORE", "z", "nope"),                        None)
+    chk("ZRANK a",    cmd(s, "ZRANK", "z", "b"),                            0)  # b=2 is lowest
+    chk("ZREVRANK a", cmd(s, "ZREVRANK", "z", "b"),                         2)
+    chk("ZINCRBY",    cmd(s, "ZINCRBY", "z", "10", "b"),                   "12")
+    chk("ZCOUNT",     cmd(s, "ZCOUNT", "z", "1", "10"),                     2)  # c=3, a=5
+    chk("ZRANGE",     cmd(s, "ZRANGE", "z", "0", "-1"),                    ["c","a","b"])
+    chk("ZREVRANGE",  cmd(s, "ZREVRANGE", "z", "0", "-1"),                 ["b","a","c"])
+    chk("ZRANGEBYSCORE", cmd(s, "ZRANGEBYSCORE", "z", "1", "6"),           ["c","a"])
+    chk("ZREM",       cmd(s, "ZREM", "z", "a", "b"),                        2)
+    chk("ZCARD after",cmd(s, "ZCARD", "z"),                                 1)
+
+    cmd(s, "ZADD", "zpop", "1", "x", "2", "y", "3", "z")
+    chk("ZPOPMIN",    cmd(s, "ZPOPMIN", "zpop"),   ["x", "1"])
+    chk("ZPOPMAX",    cmd(s, "ZPOPMAX", "zpop"),   ["z", "3"])
+
+    chk("TYPE zset",  cmd(s, "TYPE", "z"), "zset")
+
+    # --- SCAN ---
+    cmd(s, "FLUSHALL")
+    cmd(s, "SET", "k1", "v")
+    cmd(s, "SET", "k2", "v")
+    cmd(s, "SADD", "s_set", "x")
+    scan_result = cmd(s, "SCAN", "0")
+    chk("SCAN cursor", scan_result[0], "0")
+    chk("SCAN count",  len(scan_result[1]), 3)
+    scan_match = cmd(s, "SCAN", "0", "MATCH", "k*")
+    chk("SCAN MATCH",  sorted(scan_match[1]), ["k1","k2"])
+    scan_type = cmd(s, "SCAN", "0", "TYPE", "set")
+    chk("SCAN TYPE",   scan_type[1], ["s_set"])
+
     s.close()
     print(f"\n{'='*40}")
     if failures == 0:
@@ -210,3 +293,4 @@ try:
 finally:
     proc.terminate()
     proc.wait()
+
