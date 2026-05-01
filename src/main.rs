@@ -1,4 +1,4 @@
-//! mini_kv – Redis-compatible in-memory key-value server
+//! kivo – Redis-compatible in-memory key-value server
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,14 +7,14 @@ use clap::Parser;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
-use mini_kv::{KvStore, KvError, parse_score};
+use kivo::{KvStore, KvError, parse_score};
 
 // ---------------------------------------------------------------------------
 // CLI configuration
 // ---------------------------------------------------------------------------
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "mini_kv", version, about = "A Redis-compatible in-memory key-value store")]
+#[command(name = "kivo", version, about = "A Redis-compatible in-memory key-value store")]
 struct Config {
     /// IP address to bind to
     #[arg(long, default_value = "127.0.0.1")]
@@ -121,7 +121,7 @@ async fn parse_command<R: tokio::io::AsyncBufRead + Unpin>(
 async fn handle_client(stream: TcpStream, state: Arc<ServerState>) {
     let peer = stream.peer_addr().ok();
     state.total_connections.fetch_add(1, Ordering::Relaxed);
-    println!("[mini_kv] Client connected: {peer:?}");
+    println!("[kivo] Client connected: {peer:?}");
 
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -136,8 +136,8 @@ async fn handle_client(stream: TcpStream, state: Arc<ServerState>) {
         let parts = match parse_command(&mut reader).await {
             Ok(p) => p,
             Err(e) => {
-                if e != "EOF" { eprintln!("[mini_kv] Parse error from {peer:?}: {e}"); }
-                println!("[mini_kv] Client disconnected: {peer:?}");
+                if e != "EOF" { eprintln!("[kivo] Parse error from {peer:?}: {e}"); }
+                println!("[kivo] Client disconnected: {peer:?}");
                 return;
             }
         };
@@ -174,7 +174,7 @@ async fn handle_client(stream: TcpStream, state: Arc<ServerState>) {
 
             "QUIT" => {
                 writer.write_all(resp_ok().as_bytes()).await.ok();
-                println!("[mini_kv] Client quit: {peer:?}");
+                println!("[kivo] Client quit: {peer:?}");
                 return;
             }
 
@@ -597,13 +597,13 @@ fn execute_command(store: &KvStore, cmd: &str, parts: &[String]) -> String {
         "ZSCORE"  => {
             args_eq!(3);
             resp_kv_result(store.zscore(&parts[1], &parts[2]), |sc| {
-                match sc { None => resp_nil().to_string(), Some(s) => resp_bulk(&mini_kv::format_score(s)) }
+                match sc { None => resp_nil().to_string(), Some(s) => resp_bulk(&kivo::format_score(s)) }
             })
         }
         "ZINCRBY" => {
             args_eq!(4);
             let delta = match parse_score(&parts[2]) { Some(v) => v, None => return resp_err("value is not a valid float") };
-            resp_kv_result(store.zincrby(parts[1].clone(), delta, parts[3].clone()), |s| resp_bulk(&mini_kv::format_score(s)))
+            resp_kv_result(store.zincrby(parts[1].clone(), delta, parts[3].clone()), |s| resp_bulk(&kivo::format_score(s)))
         }
         "ZCARD"      => { args_eq!(2); resp_kv_result(store.zcard(&parts[1]), |n| resp_int(n as i64)) }
         "ZRANK"      => {
@@ -707,7 +707,7 @@ fn build_info(state: &ServerState) -> String {
     let conns       = state.total_connections.load(Ordering::Relaxed);
 
     let body = format!(
-"# Server\r\nredis_version:7.0.0-mini_kv\r\nredis_mode:standalone\r\nnos:rust\r\n\
+"# Server\r\nredis_version:7.0.0-kivo\r\nredis_mode:standalone\r\nnos:rust\r\n\
 arch_bits:64\r\nuptime_in_seconds:{uptime_secs}\r\n\
 \r\n# Clients\r\ntotal_connections_received:{conns}\r\n\
 \r\n# Stats\r\ntotal_commands_processed:{cmds}\r\n\
@@ -726,7 +726,7 @@ async fn main() -> std::io::Result<()> {
     let addr   = format!("{}:{}", config.host, config.port);
 
     println!("╔════════════════════════════════════════╗");
-    println!("║           mini_kv  v0.2.0              ║");
+    println!("║             kivo  v0.2.0               ║");
     println!("║  Redis-compatible key-value server     ║");
     println!("╚════════════════════════════════════════╝");
     println!("  Listening on  : {addr}");
@@ -756,14 +756,14 @@ async fn main() -> std::io::Result<()> {
 
                 let purged = bg.store.purge_expired();
                 if purged > 0 {
-                    println!("[mini_kv] Active expiry: removed {purged} expired keys");
+                    println!("[kivo] Active expiry: removed {purged} expired keys");
                 }
 
                 if let Err(e) = bg.store.save(std::path::Path::new(&bg.config.db_file)).await {
-                    eprintln!("[mini_kv] BGSAVE error: {e}");
+                    eprintln!("[kivo] BGSAVE error: {e}");
                 } else {
                     let n = bg.store.db_size();
-                    println!("[mini_kv] BGSAVE OK — {n} keys persisted");
+                    println!("[kivo] BGSAVE OK — {n} keys persisted");
                 }
             }
         });
@@ -771,7 +771,7 @@ async fn main() -> std::io::Result<()> {
 
     // --- Accept connections ---
     let listener = TcpListener::bind(&addr).await?;
-    println!("[mini_kv] Ready to accept connections.");
+    println!("[kivo] Ready to accept connections.");
 
     loop {
         match listener.accept().await {
@@ -779,7 +779,7 @@ async fn main() -> std::io::Result<()> {
                 let s = Arc::clone(&state);
                 tokio::spawn(async move { handle_client(stream, s).await });
             }
-            Err(e) => eprintln!("[mini_kv] Accept error: {e}"),
+            Err(e) => eprintln!("[kivo] Accept error: {e}"),
         }
     }
 }

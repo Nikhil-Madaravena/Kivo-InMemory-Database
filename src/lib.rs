@@ -1,4 +1,4 @@
-//! mini_kv storage engine
+//! kivo storage engine
 //!
 //! Internally uses 16 independent shards, each protected by its own
 //! `std::sync::RwLock`, so concurrent clients can operate on different
@@ -211,7 +211,7 @@ impl KvStore {
                 store.shards[idx].write().unwrap().entries.insert(key, entry);
             }
         }
-        println!("[mini_kv] Loaded snapshot from {:?}", path);
+        println!("[kivo] Loaded snapshot from {:?}", path);
         Ok(store)
     }
 

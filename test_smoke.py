@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smoke-test mini_kv using raw RESP sockets.
+Smoke-test kivo using raw RESP sockets.
 Starts the server, runs assertions, shuts it down.
 """
 import socket, subprocess, time, sys, os, signal
@@ -56,7 +56,7 @@ def assert_eq(label, got, want):
 # --- Start server ---
 env = os.environ.copy()
 proc = subprocess.Popen(
-    ["./target/debug/mini_kv", "--port", str(PORT), "--password", "testpass"],
+    ["./target/debug/kivo", "--port", str(PORT), "--password", "testpass"],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     env=env
 )

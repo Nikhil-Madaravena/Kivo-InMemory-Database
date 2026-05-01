@@ -1,8 +1,8 @@
-# mini_kv
+# Kivo
 
 A lightweight, Redis-compatible in-memory key-value store written in Rust.
 
-`mini_kv` speaks the **Redis Serialization Protocol (RESP)**, so it works out-of-the-box with `redis-cli` and any standard Redis client library. It is built on [Tokio](https://tokio.rs/) and uses a **16-shard concurrent store** so multiple clients can operate in parallel without contending on a single global lock.
+`Kivo` speaks the **Redis Serialization Protocol (RESP)**, so it works out-of-the-box with `redis-cli` and any standard Redis client library. It is built on [Tokio](https://tokio.rs/) and uses a **16-shard concurrent store** so multiple clients can operate in parallel without contending on a single global lock.
 
 ---
 
@@ -31,8 +31,8 @@ A lightweight, Redis-compatible in-memory key-value store written in Rust.
 ### Build & Run
 
 ```bash
-git clone https://github.com/your-username/minikv.git
-cd minikv
+git clone https://github.com/your-username/kivo.git
+cd kivo
 cargo run --release
 ```
 
@@ -40,7 +40,7 @@ Default startup output:
 
 ```
 ╔════════════════════════════════════════╗
-║           mini_kv  v0.2.0              ║
+║             kivo  v0.2.0               ║
 ║  Redis-compatible key-value server     ║
 ╚════════════════════════════════════════╝
   Listening on  : 127.0.0.1:6379
@@ -49,13 +49,13 @@ Default startup output:
   Snapshot file : data.json
   Save interval : 10s
 
-[mini_kv] Ready to accept connections.
+[kivo] Ready to accept connections.
 ```
 
 ### CLI Options
 
 ```
-Usage: mini_kv [OPTIONS]
+Usage: kivo [OPTIONS]
 
 Options:
       --host <HOST>                  [default: 127.0.0.1]

@@ -1,5 +1,5 @@
 [package]
-name = "mini_kv"
+name = "kivo"
 version = "0.2.0"
 edition = "2021"
 
