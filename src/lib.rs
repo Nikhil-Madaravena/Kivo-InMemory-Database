@@ -197,12 +197,12 @@ impl KvStore {
             return Ok(store);
         }
         let mut f = tokio::fs::File::open(path).await?;
-        let mut buf = String::new();
-        f.read_to_string(&mut buf).await?;
-        if buf.trim().is_empty() {
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).await?;
+        if buf.is_empty() {
             return Ok(store);
         }
-        let snap: Snapshot = serde_json::from_str(&buf)
+        let snap: Snapshot = bincode::deserialize(&buf)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let now = now_ms();
         for (key, entry) in snap.entries {
@@ -227,12 +227,12 @@ impl KvStore {
             }
         }
         let snap = Snapshot { entries: all };
-        let json = serde_json::to_string_pretty(&snap)
+        let bin = bincode::serialize(&snap)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let tmp = path.with_extension("tmp");
         let mut f = OpenOptions::new().create(true).truncate(true).write(true)
             .open(&tmp).await?;
-        f.write_all(json.as_bytes()).await?;
+        f.write_all(&bin).await?;
         f.flush().await?;
         tokio::fs::rename(&tmp, path).await?;
         Ok(())
